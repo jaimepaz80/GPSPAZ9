@@ -593,7 +593,7 @@ def calcular_posicion_satelite_wgs84(eph, t_emision, tau_vuelo, sys_char='G'):
     return (xs * math.cos(theta) + ys * math.sin(theta), -xs * math.sin(theta) + ys * math.cos(theta), zs, dt_sat)
 
 # =====================================================================
-# MOTOR PPK HÍBRIDO DETERMINISTA (VERSIÓN 9 - SMARTPHONE EDITION)
+# MOTOR PPK HÍBRIDO DETERMINISTA (VERSIÓN 9 ARREGLADA)
 # =====================================================================
 def aislar_diferencias_simples_ppk(obs_b, obs_r):
     sd_suavizada = {}
@@ -687,7 +687,7 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
         Z_base_corr = kf_estado['X_base'][2] + dz_tide
         lat_base, lon_base, alt_base = ecef_a_geodesicas(X_base_corr, Y_base_corr, Z_base_corr)
         
-        # [VERSIÓN 9: ESCUDO 1] Detección de Saltos de Ciclo mediante Combinación Geometry-Free
+        # [VERSIÓN 9 ARREGLADA: ESCUDO 1 RELAJADO] Tolerancia a Android Clock Steering
         cs_state = kf_estado.get('cs_state', {})
         cycle_slips = {}
         for s, d in sd_epoca.items():
@@ -696,7 +696,8 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
             if d['cp_r1'] is not None and d['cp_r5'] is not None:
                 gf = (d['cp_r1'] * WAVE_L1) - (d['cp_r5'] * WAVE_L5)
                 if s in cs_state:
-                    if abs(gf - cs_state[s]) > 0.15: cs = True # Salto detectado (Duty Cycling de Android)
+                    # Umbral relajado a 2.5m para absorber el ajuste de reloj del smartphone
+                    if abs(gf - cs_state[s]) > 2.5: cs = True 
                 cs_state[s] = gf
             cycle_slips[s] = cs
         kf_estado['cs_state'] = cs_state
@@ -790,7 +791,6 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
             data = sat_data_processed[s]
             rc = sat_data_processed[ref_sats[c]]
             
-            # [VERSIÓN 9: ESCUDO 2] Combinación Iono-Free Adaptativa
             use_IF = False
             if data['snr'] >= 32.0 and rc['snr'] >= 32.0 and not data['cycle_slip'] and data['SD_P_IF'] is not None and rc['SD_P_IF'] is not None:
                 use_IF = True
@@ -818,12 +818,13 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
             
             r_val = ((10.0 ** (-data['snr'] / 10.0)) * 100.0) * var_multiplier
             
-            # [VERSIÓN 9: ESCUDO 3] Test de Innovación Chi-Cuadrado (4 Sigma)
+            # [VERSIÓN 9 ARREGLADA: ESCUDO 3] Test de Innovación Chi-Cuadrado (4 Sigma) con CASTIGO
             S_ii = r_val
             for r_idx in range(3):
                 for c_idx in range(3): S_ii += dx_geom[r_idx] * P_pri[r_idx][c_idx] * dx_geom[c_idx]
             
-            if (v**2 / max(1e-6, S_ii)) > 16.0: continue # Multipath rechazado
+            if (v**2 / max(1e-6, S_ii)) > 16.0: 
+                r_val *= 100.0 # Castigo de peso estadístico en matriz R, evitando expulsión geométrica
                 
             L.append([v]); H.append(dx_geom); R_diag.append(r_val)
             
@@ -994,7 +995,7 @@ def generar_informe_ascii(tipo, p_dict):
 ------------------------------------------------------------------------
   [-] Motor Algorítmico      : Filtro Kalman Extendido (EKF PPK) + RTS Smoother
   [-] Observables Inyectadas : L1/L5 Adaptativo Iono-Free + C1/C5
-  [-] Control de Ruido       : Geometry-Free Cycle Slip + Chi-Cuadrado (4 Sigma)
+  [-] Control de Ruido       : Geometry-Free Cycle Slip + Chi-Cuadrado Soft Penalization
   [-] Correcciones Geofísicas: Mareas Sólidas Terrestres
   [-] Órbitas Satelitales    : SP3 Interpolación Lagrange 9°
 
@@ -1143,7 +1144,7 @@ def tab3_calibrar():
 
     def procesar():
         try:
-            yield f"> [SISTEMA] Búsqueda Determinista V9 ({p_iter} Iteraciones)...\n"
+            yield f"> [SISTEMA] Búsqueda Determinista V9 Arreglada ({p_iter} Iteraciones)...\n"
             if utm_e == 0.0 or utm_n == 0.0: yield "> [ERROR] Coordenadas Base requeridas.\n"; return
             
             nav_path, sp3_path = leer_estado('nav_path'), leer_estado('sp3_path')
@@ -1163,7 +1164,6 @@ def tab3_calibrar():
             P_init = matid(3)
             for i in range(3): P_init[i][i] = 100.0
             
-            # [VERSIÓN 9] Inicializa el cs_state en vacío
             kf_estado_raw = {'X': [[X_bg], [Y_bg], [Z_bg]], 'P': P_init, 'X_base': (X_b, Y_b, Z_b), 'fix_flags': 0, 'h_r': h_r, 'cs_state': {}}
             coords_raw = []
             for t in list(sd_suavizada.keys()):
@@ -1259,9 +1259,23 @@ def tab3_calibrar():
                     gap_center, gap_span = best_params['max_gap'], gap_span / 2.0
                 else: m_span /= 2.0; cp_span /= 2.0; ca_span /= 2.0; snr_span /= 2.0; gap_span /= 2.0
             
+            # [VERSIÓN 9 ARREGLADA]: Restauración de la caja negra detallada
             if global_best_score != float('inf'):
-                yield f"\n========================================================\n"
-                yield f"  [-] RMSE Global 3D al Punto: {f_14(best_params['rmse'])} m\n"
+                yield "\n========================================================\n"
+                yield "      [INFORME] PARÁMETROS ÓPTIMOS (CALIBRACIÓN EKF/PPK)\n"
+                yield "========================================================\n"
+                yield f"  [-] Tolerancia Sync (max_gap): {f_14(best_params['max_gap'])}\n"
+                yield f"  [-] Máscara SNR (dBHz): {f_14(best_params['snr'])}\n"
+                yield f"  [-] Máscara Elevación (°): {f_14(best_params['mask'])}\n"
+                yield f"  [-] Filtro Sigma Plan (cp): {f_14(best_params['cp'])}\n"
+                yield f"  [-] Filtro Sigma Alt (ca): {f_14(best_params['ca'])}\n"
+                yield f"  [-] Error Permitido Horizontal (m): {f_14(best_params['eh'])}\n"
+                yield f"  [-] Error Permitido Vertical (m): {f_14(best_params['ev'])}\n"
+                yield "--------------------------------------------------------\n"
+                yield f"  [*] RMSE Global 3D al Punto: {f_14(best_params['rmse'])} m\n"
+                yield f"  [*] Deltas Residuales -> N: {f_14(best_params['dn'])}m, E: {f_14(best_params['de'])}m, Z: {f_14(best_params['dz'])}m\n"
+                yield f"  [*] Épocas Retenidas EKF: {best_params['ret']}\n"
+                yield "========================================================\n"
                 yield "\n[SUCCESS]"
             else: yield "\n> [ERROR] El modelo Kalman no convergió.\n"
         except Exception as e: yield f"\n> [ERROR FATAL] {str(e)}"
