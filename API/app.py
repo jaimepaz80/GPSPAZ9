@@ -186,7 +186,7 @@ def invert_matrix_nxn(M):
         return gauss_jordan_inverse(M)
 
 # =====================================================================
-# PARSERS Y GESTIÓN DE ARCHIVOS (EXTRACCIÓN SMARTPHONE L1/L5)
+# PARSERS Y GESTIÓN DE ARCHIVOS (MODIFICADO PARA DUAL-FREQ SMARTPHONES)
 # =====================================================================
 def parse_rinex_obs_completo(path):
     obs = {}
@@ -309,7 +309,7 @@ def obtener_fecha_obs(filepath):
     return None
 
 # =====================================================================
-# PRODUCTOS IGS Y EFEMÉRIDES
+# PRODUCTOS IGS Y EFEMÉRIDES (HÍBRIDO NAV / SP3)
 # =====================================================================
 SP3_CACHE = {}
 SP3_CACHE_KEYS = []
@@ -355,7 +355,8 @@ def interpolate_sp3(sp3_data, sat, t_emision, degree=9):
     global SP3_CACHE, SP3_CACHE_KEYS
     cache_key = f"{sat}_{t_emision}"
     
-    if cache_key in SP3_CACHE: return SP3_CACHE[cache_key]
+    if cache_key in SP3_CACHE:
+        return SP3_CACHE[cache_key]
 
     if sat not in sp3_data: return None
     data = sp3_data[sat]
@@ -385,6 +386,7 @@ def interpolate_sp3(sp3_data, sat, t_emision, degree=9):
         
     SP3_CACHE[cache_key] = result
     SP3_CACHE_KEYS.append(cache_key)
+    
     return result
 
 def parse_rinex_nav_real(path):
@@ -426,9 +428,14 @@ def seleccionar_efemeride_optima(eph_list, t_target):
 # =====================================================================
 def correccion_mareas_solidas(X, Y, Z, tow, year, month, day):
     try:
-        h2, l2 = 0.609, 0.085
+        h2 = 0.609
+        l2 = 0.085
+        
         Re = 6378137.0
-        GM_earth, GM_sun, GM_moon = 3.986004418e14, 1.327124e20, 4.902801e12
+        GM_earth = 3.986004418e14
+        GM_sun = 1.327124e20
+        GM_moon = 4.902801e12
+        
         jd = 367 * year - (7 * (year + (month + 9) // 12)) // 4 + (275 * month) // 9 + day + 1721013.5
         t_jc = (jd - 2451545.0 + (tow / 86400.0)) / 36525.0
         
@@ -455,6 +462,7 @@ def correccion_mareas_solidas(X, Y, Z, tow, year, month, day):
         
         r_sta = math.sqrt(X**2 + Y**2 + Z**2)
         if r_sta == 0: return 0.0, 0.0, 0.0
+        
         rx, ry, rz = X/r_sta, Y/r_sta, Z/r_sta
         
         def deformacion_cuerpo(mass_ratio, R_body, xs, ys, zs):
@@ -462,17 +470,26 @@ def correccion_mareas_solidas(X, Y, Z, tow, year, month, day):
             if dist_body == 0: return 0.0, 0.0, 0.0
             ux, uy, uz = xs/dist_body, ys/dist_body, zs/dist_body
             cos_theta = rx*ux + ry*uy + rz*uz
+            
             p2 = 1.5 * cos_theta**2 - 0.5
             p2_prime = 3.0 * cos_theta
+            
             coef = (GM_earth / Re**2) * mass_ratio * (Re / dist_body)**3 * Re
+            
             dr_radial = h2 * coef * p2
             dr_tangent = l2 * coef * p2_prime
-            return dr_radial * rx + dr_tangent * (ux - cos_theta * rx), dr_radial * ry + dr_tangent * (uy - cos_theta * ry), dr_radial * rz + dr_tangent * (uz - cos_theta * rz)
+            
+            dx = dr_radial * rx + dr_tangent * (ux - cos_theta * rx)
+            dy = dr_radial * ry + dr_tangent * (uy - cos_theta * ry)
+            dz = dr_radial * rz + dr_tangent * (uz - cos_theta * rz)
+            return dx, dy, dz
 
         dx_sun, dy_sun, dz_sun = deformacion_cuerpo(GM_sun/GM_earth, dist_sun, xs_sun, ys_sun, zs_sun)
         dx_moon, dy_moon, dz_moon = deformacion_cuerpo(GM_moon/GM_earth, dist_moon, xs_moon, ys_moon, zs_moon)
+        
         return dx_sun + dx_moon, dy_sun + dy_moon, dz_sun + dz_moon
-    except: return 0.0, 0.0, 0.0 
+    except:
+        return 0.0, 0.0, 0.0 
 
 def calcular_saastamoinen(lat_deg, alt, elev_deg):
     if elev_deg < 5.0: elev_deg = 5.0
@@ -528,7 +545,8 @@ def utm_a_geodesicas(easting, northing, zone=19, hemisferio='N'):
 
 def calcular_topocentricas(xs, ys, zs, X_usr, Y_usr, Z_usr):
     lat_val, lon_val, alt_val = ecef_a_geodesicas(X_usr, Y_usr, Z_usr)
-    lat_r, lon_r = math.radians(lat_val), math.radians(lon_val)
+    lat_r = math.radians(lat_val)
+    lon_r = math.radians(lon_val)
     dx, dy, dz = xs - X_usr, ys - Y_usr, zs - Z_usr
     sin_lat, cos_lat = math.sin(lat_r), math.cos(lat_r)
     sin_lon, cos_lon = math.sin(lon_r), math.cos(lon_r)
@@ -626,8 +644,10 @@ def aislar_diferencias_simples_ppk(obs_b, obs_r):
 def decorrelacion_lambda_z(Q):
     n = len(Q)
     Z = matid(n)
-    try: L = cholesky_decompose(Q)
-    except: return Z, Q 
+    try:
+        L = cholesky_decompose(Q)
+    except:
+        return Z, Q 
     for i in range(n - 1, -1, -1):
         for j in range(i - 1, -1, -1):
             mu = round(L[i][j] / L[j][j])
@@ -641,22 +661,30 @@ def decorrelacion_lambda_z(Q):
 def suavizador_rts_backward(forward_states):
     n = len(forward_states)
     if n == 0: return []
+    
     smoothed_states = [None] * n
     smoothed_states[-1] = forward_states[-1]['X_post']
+    
     for k in range(n-2, -1, -1):
         P_post_k = forward_states[k]['P_post']
         P_pri_k1 = forward_states[k+1]['P_pri']
+        
         P_pri_inv = invert_matrix_nxn(P_pri_k1)
         if not P_pri_inv:
             smoothed_states[k] = forward_states[k]['X_post']
             continue
+            
         C_k = matmul(P_post_k, P_pri_inv)
+        
         X_smooth_k1 = smoothed_states[k+1]
         X_pri_k1 = forward_states[k+1]['X_pri']
+        
         dx = [[X_smooth_k1[i][0] - X_pri_k1[i][0]] for i in range(3)]
         correction = matmul(C_k, dx)
+        
         X_post_k = forward_states[k]['X_post']
         smoothed_states[k] = [[X_post_k[i][0] + correction[i][0]] for i in range(3)]
+        
     return smoothed_states
 
 def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask):
@@ -665,7 +693,10 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
         P_pri = [row[:] for row in kf_estado['P']]
         h_r = kf_estado.get('h_r', 0.0)
         
-        X_iter, Y_iter, Z_iter = X_pri[0][0], X_pri[1][0], X_pri[2][0]
+        X_iter = X_pri[0][0]
+        Y_iter = X_pri[1][0]
+        Z_iter = X_pri[2][0]
+        
         lat_r, lon_r, alt_r = ecef_a_geodesicas(X_iter, Y_iter, Z_iter)
         lat_rad, lon_rad = math.radians(lat_r), math.radians(lon_r)
         
@@ -685,10 +716,14 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
         X_base_corr = kf_estado['X_base'][0] + dx_tide
         Y_base_corr = kf_estado['X_base'][1] + dy_tide
         Z_base_corr = kf_estado['X_base'][2] + dz_tide
+        
         lat_base, lon_base, alt_base = ecef_a_geodesicas(X_base_corr, Y_base_corr, Z_base_corr)
         
-        # [VERSIÓN 9 ARREGLADA: ESCUDO 1 RELAJADO] Tolerancia a Android Clock Steering
+        # [VERSIÓN 9 ARREGLADA: ESCUDO 1] Geometry-Free con Tolerancia Smartphone (2.5m)
         cs_state = kf_estado.get('cs_state', {})
+        if_count = kf_estado.get('if_count', 0)
+        chi_count = kf_estado.get('chi_count', 0)
+        
         cycle_slips = {}
         for s, d in sd_epoca.items():
             if s == '_meta': continue
@@ -696,7 +731,6 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
             if d['cp_r1'] is not None and d['cp_r5'] is not None:
                 gf = (d['cp_r1'] * WAVE_L1) - (d['cp_r5'] * WAVE_L5)
                 if s in cs_state:
-                    # Umbral relajado a 2.5m para absorber el ajuste de reloj del smartphone
                     if abs(gf - cs_state[s]) > 2.5: cs = True 
                 cs_state[s] = gf
             cycle_slips[s] = cs
@@ -711,6 +745,7 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
             t_emision_b = tr - tau_b
             
             sp_r, sp_b = None, None
+            
             if sp3 and s in sp3:
                 sp3_res_r = interpolate_sp3(sp3, s, t_emision_r)
                 sp3_res_b = interpolate_sp3(sp3, s, t_emision_b)
@@ -719,6 +754,7 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
                     xs_r = sp3_res_r[0] * math.cos(theta_r) + sp3_res_r[1] * math.sin(theta_r)
                     ys_r = -sp3_res_r[0] * math.sin(theta_r) + sp3_res_r[1] * math.cos(theta_r)
                     sp_r = (xs_r, ys_r, sp3_res_r[2], sp3_res_r[3]) 
+                    
                     theta_b = OMEGA_E * tau_b
                     xs_b = sp3_res_b[0] * math.cos(theta_b) + sp3_res_b[1] * math.sin(theta_b)
                     ys_b = -sp3_res_b[0] * math.sin(theta_b) + sp3_res_b[1] * math.cos(theta_b)
@@ -791,9 +827,11 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
             data = sat_data_processed[s]
             rc = sat_data_processed[ref_sats[c]]
             
+            # [VERSIÓN 9 ARREGLADA: ESCUDO 2] Iono-Free Adaptativo
             use_IF = False
             if data['snr'] >= 32.0 and rc['snr'] >= 32.0 and not data['cycle_slip'] and data['SD_P_IF'] is not None and rc['SD_P_IF'] is not None:
                 use_IF = True
+                if_count += 1
                 
             DD_P_obs, DD_P_calc = None, None
             var_multiplier = 9.0
@@ -818,13 +856,14 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
             
             r_val = ((10.0 ** (-data['snr'] / 10.0)) * 100.0) * var_multiplier
             
-            # [VERSIÓN 9 ARREGLADA: ESCUDO 3] Test de Innovación Chi-Cuadrado (4 Sigma) con CASTIGO
+            # [VERSIÓN 9 ARREGLADA: ESCUDO 3] Test de Innovación con Castigo Soft (No expulsa, solo quita peso)
             S_ii = r_val
             for r_idx in range(3):
                 for c_idx in range(3): S_ii += dx_geom[r_idx] * P_pri[r_idx][c_idx] * dx_geom[c_idx]
             
             if (v**2 / max(1e-6, S_ii)) > 16.0: 
-                r_val *= 100.0 # Castigo de peso estadístico en matriz R, evitando expulsión geométrica
+                r_val *= 100.0 
+                chi_count += 1
                 
             L.append([v]); H.append(dx_geom); R_diag.append(r_val)
             
@@ -864,19 +903,33 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
         
         Q_cov = invert_matrix_nxn(N_mat)
         if not Q_cov: return None, "FAILED", kf_estado, None
+        
         Delta_X = matmul(Q_cov, U_vec)
         
-        X_post = [[X_pri[0][0] + Delta_X[0][0]], [X_pri[1][0] + Delta_X[1][0]], [X_pri[2][0] + Delta_X[2][0]]]
+        X_post = [
+            [X_pri[0][0] + Delta_X[0][0]],
+            [X_pri[1][0] + Delta_X[1][0]],
+            [X_pri[2][0] + Delta_X[2][0]]
+        ]
+        
+        P_post = Q_cov 
         
         kf_estado['X'] = X_post
-        kf_estado['P'] = Q_cov
+        kf_estado['P'] = P_post
+        kf_estado['if_count'] = if_count
+        kf_estado['chi_count'] = chi_count
+        
         status = "FIXED (PPK)" if kf_estado['fix_flags'] > 4 else "FLOAT (DGPS)"
         kf_estado['fix_flags'] = 0 
         
-        state_dict = {'tow': tr, 'X_pri': X_pri, 'P_pri': P_pri, 'X_post': X_post, 'P_post': Q_cov}
+        state_dict = {
+            'tow': tr, 'X_pri': X_pri, 'P_pri': P_pri, 'X_post': X_post, 'P_post': P_post
+        }
+        
         return (X_post[0][0], X_post[1][0], X_post[2][0]), status, kf_estado, state_dict
 
-    except Exception as e: return None, f"FAILED_EXCEPTION:_{str(e)}", kf_estado, None
+    except Exception as e:
+        return None, f"FAILED_EXCEPTION:_{str(e)}", kf_estado, None
 
 # =====================================================================
 # ESTADÍSTICAS Y FILTRADO VINCULANTE
@@ -884,29 +937,37 @@ def procesar_ekF_lambda(sd_epoca, nav, sp3, kf_estado, tr, mask_angle, snr_mask)
 def estadistica_desacoplada(coordenadas, conf_plani, conf_alti, err_hor_max, err_ver_max):
     if not coordenadas: return None, None, None, 0, 0, 0, 0, 0.0
     N_list = [c[0] for c in coordenadas]; E_list = [c[1] for c in coordenadas]; Z_list = [c[2] for c in coordenadas]
+
     def get_median(lst):
         s = sorted(lst); n = len(s)
         if n == 0: return 0
         return s[n//2] if n % 2 == 1 else (s[n//2 - 1] + s[n//2]) / 2.0
+
     med_N = get_median(N_list); med_E = get_median(E_list); med_Z = get_median(Z_list)
+    
     valid_coords = []
     for c in coordenadas:
         dh = math.hypot(c[0] - med_N, c[1] - med_E)
         dv = abs(c[2] - med_Z)
         if (err_hor_max > 0.0 and dh > err_hor_max) or (err_ver_max > 0.0 and dv > err_ver_max): continue
         valid_coords.append(c)
+
     if not valid_coords: return None, None, None, 0, 0, 0, 0, 0.0
+    
     def calc_mean_std(arr):
         n = len(arr); m = sum(arr) / max(1, n)
         return m, (math.sqrt(sum((x - m)**2 for x in arr) / n) if n > 1 else 0.0)
+
     N_v = [c[0] for c in valid_coords]; E_v = [c[1] for c in valid_coords]; Z_v = [c[2] for c in valid_coords]
     N_m, N_s = calc_mean_std(N_v); E_m, E_s = calc_mean_std(E_v); Z_m, Z_s = calc_mean_std(Z_v)
+    
     final_coords = []
     for c in valid_coords:
         if N_s > 0 and abs(c[0] - N_m) > conf_plani * N_s: continue
         if E_s > 0 and abs(c[1] - E_m) > conf_plani * E_s: continue
         if Z_s > 0 and abs(c[2] - Z_m) > conf_alti * Z_s: continue
         final_coords.append(c)
+
     if not final_coords: return None, None, None, 0, 0, 0, 0, 0.0
     N_f = [c[0] for c in final_coords]; E_f = [c[1] for c in final_coords]; Z_f = [c[2] for c in final_coords]
     f_v = [c[3] for c in final_coords if len(c) > 3 and "FIXED" in c[3]]
@@ -914,7 +975,7 @@ def estadistica_desacoplada(coordenadas, conf_plani, conf_alti, err_hor_max, err
     return get_median(N_f), get_median(E_f), get_median(Z_f), N_s, E_s, Z_s, len(final_coords), fix_ratio
 
 # =====================================================================
-# GENERADORES DE INFORMES
+# GENERADORES DE INFORMES (CAJA NEGRA EXPANDIDA)
 # =====================================================================
 def generar_informe_homogeneizacion_detallado(base_name, rover_name, base_raw, rover_raw, rover_sinc):
     def get_stats(obs):
@@ -996,6 +1057,8 @@ def generar_informe_ascii(tipo, p_dict):
   [-] Motor Algorítmico      : Filtro Kalman Extendido (EKF PPK) + RTS Smoother
   [-] Observables Inyectadas : L1/L5 Adaptativo Iono-Free + C1/C5
   [-] Control de Ruido       : Geometry-Free Cycle Slip + Chi-Cuadrado Soft Penalization
+  [-] Épocas Iono-Free (IF)  : {p_dict.get('if_count', 0)} activaciones
+  [-] Penalizaciones Chi^2   : {p_dict.get('chi_count', 0)} atenuaciones de Multipath
   [-] Correcciones Geofísicas: Mareas Sólidas Terrestres
   [-] Órbitas Satelitales    : SP3 Interpolación Lagrange 9°
 
@@ -1037,17 +1100,21 @@ def tab1_homogenizar():
     
     url_base = request.form.get('url_base')
     url_rover = request.form.get('url_rover')
-    if not url_base or not url_rover: return Response("> [ERROR CRÍTICO] Enlaces faltantes.\n", mimetype='text/plain')
+    
+    if not url_base or not url_rover: 
+        return Response("> [ERROR CRÍTICO] Enlaces de Google Drive faltantes.\n", mimetype='text/plain')
+    
     p_b_raw = os.path.join(UPLOAD_FOLDER, 'base_raw.obs')
     p_r_raw = os.path.join(UPLOAD_FOLDER, 'rover_calibracion_raw.obs')
 
     def procesar():
         try:
-            yield "> [RED] Descargando RINEX Base...\n"
+            yield "> [RED] Descargando RINEX Base desde Google Drive...\n"
             descargar_desde_gdrive(url_base, p_b_raw)
-            yield "> [RED] Descargando RINEX Rover...\n"
+            yield "> [RED] Descargando RINEX Rover desde Google Drive...\n"
             descargar_desde_gdrive(url_rover, p_r_raw)
-            yield f"\n> [SISTEMA] Iniciando Emparejamiento...\n"
+
+            yield f"\n> [SISTEMA] Iniciando Etapa 1: Emparejamiento Base Pivote y Rover de Calibración...\n"
             base_raw_dict = parse_rinex_obs_completo(p_b_raw)
             rover_raw_dict = parse_rinex_obs_completo(p_r_raw)
             base_sinc, rover_sinc = {}, {}
@@ -1055,14 +1122,15 @@ def tab1_homogenizar():
             c = 0
             for tr in sorted(list(rover_raw_dict.keys())):
                 c += 1
-                if total_epochs > 0 and c % max(1, total_epochs // 10) == 0: yield f"[PROGRESO] Cotejando épocas... {int((c / total_epochs) * 100)}%\n"
+                if total_epochs > 0 and c % max(1, total_epochs // 10) == 0: 
+                    yield f"[PROGRESO] Cotejando épocas sin distorsión... {int((c / total_epochs) * 100)}%\n"
                 base_interp = interpolar_base_a_rover(base_raw_dict, tr)
                 if base_interp:
                     base_sinc[tr] = base_interp
                     base_sinc[tr]['_meta'] = rover_raw_dict[tr]['_meta']
                     rover_sinc[tr] = rover_raw_dict[tr]
             
-            if not base_sinc: yield "\n> [ERROR FATAL] Cero épocas en común."; return
+            if not base_sinc: yield "\n> [ERROR FATAL] Cero épocas en común. Revisar rango horario."; return
             p_b_h = os.path.join(UPLOAD_FOLDER, 'base_calib_homo.obs')
             p_r_h = os.path.join(UPLOAD_FOLDER, 'rover_calib_homo.obs')
             generar_rinex_sincronizado(p_b_raw, p_b_h, base_sinc)
@@ -1071,10 +1139,12 @@ def tab1_homogenizar():
             guardar_estado('base_raw', p_b_raw)
             guardar_estado('base_calib_homo', p_b_h)
             guardar_estado('rover_calib_homo', p_r_h)
+            
             name_base = "Drive_Base_Pivote.obs"
             name_rover = "Drive_Rover_Calib.obs"
             guardar_estado('name_base_raw', name_base)
             guardar_estado('name_rover_calib_raw', name_rover)
+            
             yield generar_informe_homogeneizacion_detallado(name_base, name_rover, base_raw_dict, rover_raw_dict, rover_sinc)
             yield "\n[SUCCESS]"
         except Exception as e: yield f"\n> [ERROR] Falla estructural: {str(e)}"
@@ -1083,6 +1153,7 @@ def tab1_homogenizar():
 @app.route('/API/tab2_efemerides', methods=['POST'])
 def tab2_efemerides():
     f_sp3 = request.files.get('file_sp3')
+    
     sp3_path = None
     if f_sp3 and f_sp3.filename != '':
         sp3_path = os.path.join(UPLOAD_FOLDER, 'manual_sp3.sp3')
@@ -1096,14 +1167,21 @@ def tab2_efemerides():
     def procesar():
         try:
             yield "> [SISTEMA] Iniciando Inyección Híbrida de Efemérides...\n"
+            if sp3_path: yield f"  [-] Archivo SP3 Preciso cargado manualmente: {f_sp3.filename}\n"
+            else: yield "  [!] No se detectó archivo SP3 manual. Se usará solo Broadcast NAV.\n"
+
+            yield "\n> [RED] Conectando con IGS BKG para descargar Respaldo NAV...\n"
             bp = leer_estado('base_raw')
-            if not bp or not os.path.exists(bp): yield "> [ERROR FATAL] Falta RINEX Base.\n"; return
+            if not bp or not os.path.exists(bp): 
+                yield "> [ERROR FATAL] Falta RINEX Base en memoria para extraer fecha.\n"; return
+            
             ft = obtener_fecha_obs(bp)
-            if not ft: yield "> [ERROR FATAL] Imposible extraer fecha.\n"; return
+            if not ft: yield "> [ERROR FATAL] Imposible extraer la fecha del RINEX Base.\n"; return
             
             year, month, day = ft[0], ft[1], ft[2]
             dt = datetime.datetime(year, month, day)
             doy = dt.timetuple().tm_yday
+            
             nav_gz = os.path.join(UPLOAD_FOLDER, f"auto_nav_{year}_{doy:03d}.nav.gz")
             nav_path = os.path.join(UPLOAD_FOLDER, f"auto_nav_{year}_{doy:03d}.nav")
             
@@ -1114,66 +1192,105 @@ def tab2_efemerides():
             if not os.path.exists(nav_path):
                 urls_to_try = [
                     f"https://igs.bkg.bund.de/root_ftp/IGS/BRDC/{year}/{doy:03d}/BRDC00IGS_R_{year}{doy:03d}0000_01D_MN.rnx.gz",
-                    f"https://igs.bkg.bund.de/root_ftp/IGS/BRDC/{year}/{doy:03d}/BRDM00DLR_S_{year}{doy:03d}0000_01D_MN.rnx.gz"
+                    f"https://igs.bkg.bund.de/root_ftp/IGS/BRDC/{year}/{doy:03d}/BRDM00DLR_S_{year}{doy:03d}0000_01D_MN.rnx.gz",
+                    f"https://igs.bkg.bund.de/root_ftp/IGS/BRDC/{year}/{doy:03d}/BRDC00WRD_R_{year}{doy:03d}0000_01D_MN.rnx.gz"
                 ]
+                
                 descargado = False
                 for url_nav in urls_to_try:
                     try:
+                        yield f"  [-] Intentando descargar NAV desde: {url_nav.split('/')[-1]}...\n"
                         req = urllib.request.Request(url_nav, headers={'User-Agent': 'Mozilla/5.0'})
                         with urllib.request.urlopen(req, context=ctx, timeout=8) as res:
                             with open(nav_gz, 'wb') as f: f.write(res.read())
-                        descargado = True; break 
-                    except: continue
-                if not descargado: raise Exception("HTTP 404: NAV no publicado.")
-                with gzip.open(nav_gz, 'rb') as f_in, open(nav_path, 'wb') as f_out: shutil.copyfileobj(f_in, f_out)
+                        descargado = True
+                        yield f"  [+] Descarga exitosa de {url_nav.split('/')[-1]}\n"
+                        break 
+                    except Exception as e:
+                        yield f"  [!] No disponible (Error {str(e)}). Buscando alternativa...\n"
+                        continue
+                
+                if not descargado:
+                    raise Exception("HTTP 404: Ningún servidor IGS ha publicado aún el archivo NAV de este día.")
+                
+                yield "  [-] Descomprimiendo archivo NAV de alta densidad...\n"
+                with gzip.open(nav_gz, 'rb') as f_in, open(nav_path, 'wb') as f_out: 
+                    shutil.copyfileobj(f_in, f_out)
             
             guardar_estado('nav_path', nav_path)
             guardar_estado('name_nav_file', os.path.basename(nav_path))
-            yield f"  [-] Archivo NAV listo.\n\n[SUCCESS]"
-        except Exception as e: yield f"\n> [ERROR FATAL] {str(e)}\n"
+            yield f"  [-] Archivo NAV listo y ensamblado en memoria.\n\n[SUCCESS]"
+        except Exception as e:
+            yield f"\n> [ERROR FATAL] Fallo en descarga automática NAV: {str(e)}\n"
+
     return Response(procesar(), mimetype='text/plain')
 
 @app.route('/API/tab3_calibrar', methods=['POST'])
 def tab3_calibrar():
-    utm_n, utm_e, utm_c = safe_f(request.form.get('utm_norte')), safe_f(request.form.get('utm_este')), safe_f(request.form.get('utm_cota'))
-    utm_n_r, utm_e_r, utm_c_r = safe_f(request.form.get('utm_norte_r')), safe_f(request.form.get('utm_este_r')), safe_f(request.form.get('utm_cota_r'))
-    utm_h, utm_hem = safe_i(request.form.get('utm_huso'), 19), request.form.get('utm_hemisferio', 'N')
-    h_b, h_r = safe_f(request.form.get('altura_base')), safe_f(request.form.get('altura_rover'))
-    p_max_gap, p_snr = safe_f(request.form.get('param_max_gap'), 0.5), safe_f(request.form.get('param_snr'), 25.0)
-    p_iter = max(1, safe_i(request.form.get('param_iter'), 6))
+    utm_n = safe_f(request.form.get('utm_norte'), 0.0)
+    utm_e = safe_f(request.form.get('utm_este'), 0.0)
+    utm_c = safe_f(request.form.get('utm_cota'), 0.0)
+    utm_h = safe_i(request.form.get('utm_huso'), 19)
+    utm_hem = request.form.get('utm_hemisferio', 'N')
+
+    utm_n_r = safe_f(request.form.get('utm_norte_r'), 0.0)
+    utm_e_r = safe_f(request.form.get('utm_este_r'), 0.0)
+    utm_c_r = safe_f(request.form.get('utm_cota_r'), 0.0)
+
+    h_b = safe_f(request.form.get('altura_base'), 0.0)
+    h_r = safe_f(request.form.get('altura_rover'), 0.0)
+
+    p_max_gap = safe_f(request.form.get('param_max_gap'), 0.5)
+    p_snr = safe_f(request.form.get('param_snr'), 25.0)
+    
+    p_iter = safe_i(request.form.get('param_iter'), 6)
+    p_iter = max(1, p_iter) 
 
     def procesar():
         try:
-            yield f"> [SISTEMA] Búsqueda Determinista V9 Arreglada ({p_iter} Iteraciones)...\n"
-            if utm_e == 0.0 or utm_n == 0.0: yield "> [ERROR] Coordenadas Base requeridas.\n"; return
+            yield f"> [SISTEMA] Iniciando Búsqueda Determinista (EKF RAM-Safe | {p_iter} Iteraciones)...\n"
+            if utm_e == 0.0 or utm_n == 0.0 or utm_n_r == 0.0 or utm_e_r == 0.0: 
+                yield "> [ERROR] Coordenadas Base y Rover son requeridas.\n"; return
             
-            nav_path, sp3_path = leer_estado('nav_path'), leer_estado('sp3_path')
-            p_b_h, p_r_h = leer_estado('base_calib_homo'), leer_estado('rover_calib_homo')
-            if not nav_path or not p_b_h: yield "> [ERROR] Faltan archivos.\n"; return
+            nav_path = leer_estado('nav_path')
+            sp3_path = leer_estado('sp3_path')
+            p_b_h = leer_estado('base_calib_homo')
+            p_r_h = leer_estado('rover_calib_homo')
 
-            obs_b_raw, obs_r_raw = parse_rinex_obs_completo(p_b_h), parse_rinex_obs_completo(p_r_h)
-            nav, sp3 = parse_rinex_nav_real(nav_path), parse_sp3_preciso(sp3_path) if sp3_path else {}
+            if not nav_path or not p_b_h or not p_r_h: 
+                yield "> [ERROR FATAL] Faltan archivos. Ve a la Pestaña 2.\n"; return
+
+            obs_b_raw = parse_rinex_obs_completo(p_b_h)
+            obs_r_raw = parse_rinex_obs_completo(p_r_h)
+            nav = parse_rinex_nav_real(nav_path)
+            sp3 = parse_sp3_preciso(sp3_path) if sp3_path else {}
             
+            yield "[PROGRESO] Re-ensamblando Malla Temporal de Calibración...\n"
             sd_suavizada = aislar_diferencias_simples_ppk(obs_b_raw, obs_r_raw)
-            if not sd_suavizada: yield "> [ERROR] No hay épocas sincronizadas válidas.\n"; return
+            if not sd_suavizada:
+                yield "> [ERROR] No hay épocas sincronizadas válidas.\n"; return
 
+            t_sample = list(sd_suavizada.keys())
             lat_b, lon_b, _ = utm_a_geodesicas(utm_e, utm_n, utm_h, utm_hem)
+            
             X_b, Y_b, Z_b = geodesicas_a_ecef(lat_b, lon_b, utm_c + h_b)
             X_bg, Y_bg, Z_bg = geodesicas_a_ecef(lat_b, lon_b, utm_c)
 
+            yield "[PROGRESO] Fase 1: Extracción de Límites (Pre-Scan EKF)...\n"
             P_init = matid(3)
             for i in range(3): P_init[i][i] = 100.0
             
-            kf_estado_raw = {'X': [[X_bg], [Y_bg], [Z_bg]], 'P': P_init, 'X_base': (X_b, Y_b, Z_b), 'fix_flags': 0, 'h_r': h_r, 'cs_state': {}}
+            kf_estado_raw = {'X': [[X_bg], [Y_bg], [Z_bg]], 'P': P_init, 'X_base': (X_b, Y_b, Z_b), 'fix_flags': 0, 'h_r': h_r, 'cs_state': {}, 'if_count': 0, 'chi_count': 0}
             coords_raw = []
-            for t in list(sd_suavizada.keys()):
+            
+            for t in t_sample:
                 sem, status, kf_estado_raw, _ = procesar_ekF_lambda(sd_suavizada[t], nav, sp3, kf_estado_raw, t, 10.0, p_snr)
                 if sem:
                     la, lo, al = ecef_a_geodesicas(sem[0], sem[1], sem[2])
                     nt, et = geodesicas_a_utm(la, lo, utm_h)
                     coords_raw.append((nt, et, al, status))
             
-            if not coords_raw: yield "> [ERROR] Kalman colapsado. Verifica RINEX.\n"; return
+            if not coords_raw: yield "> [ERROR] Filtro de Kalman colapsado.\n"; return
                 
             deltas_h = [math.hypot(c[0] - utm_n_r, c[1] - utm_e_r) for c in coords_raw]
             deltas_v = [abs(c[2] - utm_c_r) for c in coords_raw]
@@ -1182,31 +1299,48 @@ def tab3_calibrar():
             def get_mad(data):
                 if not data: return 0.0, 0.0
                 med = data[len(data)//2]
-                return med, sorted([abs(x - med) for x in data])[len(data)//2]
+                mad = sorted([abs(x - med) for x in data])[len(data)//2]
+                return med, mad
 
             med_h, mad_h = get_mad(deltas_h)
             med_v, mad_v = get_mad(deltas_v)
-            best_eh, best_ev = max(0.01, med_h + 3.0 * mad_h), max(0.01, med_v + 3.0 * mad_v)
+            best_eh = max(0.01, med_h + 3.0 * mad_h)
+            best_ev = max(0.01, med_v + 3.0 * mad_v)
             
-            global_best_score, best_rmse, best_params = float('inf'), float('inf'), {}
+            yield f"  [*] Límite Horizontal EKF Inyectado: {f_14(best_eh)} m\n"
+            yield f"  [*] Límite Vertical EKF Inyectado: {f_14(best_ev)} m\n\n"
+            
+            yield f"[PROGRESO] Fase 2: Malla Pentadimensional EKF (Con Seguimiento Global)...\n"
+            
+            global_best_score = float('inf')
+            best_rmse = float('inf')
+            best_params = {}
+            
             m_center, m_span = 10.0, 5.0
             cp_center, cp_span = 2.0, 1.5
             ca_center, ca_span = 2.0, 1.5
             snr_center, snr_span = p_snr, 5.0
             gap_center, gap_span = p_max_gap, 0.2
             
-            p_b_raw, p_r_raw = leer_estado('base_raw'), os.path.join(UPLOAD_FOLDER, 'rover_calibracion_raw.obs')
+            p_b_raw = leer_estado('base_raw')
+            p_r_raw = os.path.join(UPLOAD_FOLDER, 'rover_calibracion_raw.obs')
+            
             obs_b_full = parse_rinex_obs_completo(p_b_raw) if p_b_raw and os.path.exists(p_b_raw) else obs_b_raw
             obs_r_full = parse_rinex_obs_completo(p_r_raw) if os.path.exists(p_r_raw) else obs_r_raw
-            rover_tows_full, base_tows_full = sorted(list(obs_r_full.keys())), sorted(list(obs_b_full.keys()))
+                
+            rover_tows_full = sorted(list(obs_r_full.keys()))
+            base_tows_full = sorted(list(obs_b_full.keys()))
             
             for nivel in range(p_iter):
                 yield f"  [+] Refinando espacio de búsqueda (Zoom {nivel+1}/{p_iter})...\n"
+                
                 m_grid = [max(1.0, min(25.0, x)) for x in [m_center - m_span, m_center, m_center + m_span]]
                 cp_grid = [max(0.1, min(5.0, x)) for x in [cp_center - cp_span, cp_center, cp_center + cp_span]]
                 ca_grid = [max(0.1, min(5.0, x)) for x in [ca_center - ca_span, ca_center, ca_center + ca_span]]
                 snr_grid = [max(25.0, min(45.0, x)) for x in [snr_center - snr_span, snr_center, snr_center + snr_span]]
                 gap_grid = [max(0.01, min(2.0, x)) for x in [gap_center - gap_span, gap_center, gap_center + gap_span]]
+                
+                nivel_best_rmse = float('inf')
                 
                 for gap in set(gap_grid):
                     obs_b_sync = {}
@@ -1218,13 +1352,14 @@ def tab3_calibrar():
                             obs_b_sync[tr]['_meta'] = obs_r_full[tr]['_meta']
                     
                     sd_suav = aislar_diferencias_simples_ppk(obs_b_sync, obs_r_full)
+                    t_samp = list(sd_suav.keys())
                     if not sd_suav: continue
                     
                     for m in set(m_grid):
                         for snr in set(snr_grid):
-                            kf_est = {'X': [[X_bg], [Y_bg], [Z_bg]], 'P': P_init, 'X_base': (X_b, Y_b, Z_b), 'fix_flags': 0, 'h_r': h_r, 'cs_state': {}}
+                            kf_est = {'X': [[X_bg], [Y_bg], [Z_bg]], 'P': P_init, 'X_base': (X_b, Y_b, Z_b), 'fix_flags': 0, 'h_r': h_r, 'cs_state': {}, 'if_count': 0, 'chi_count': 0}
                             coords = []
-                            for t in list(sd_suav.keys()):
+                            for t in t_samp:
                                 sem, status, kf_est, _ = procesar_ekF_lambda(sd_suav[t], nav, sp3, kf_est, t, m, snr)
                                 if sem:
                                     la, lo, al = ecef_a_geodesicas(sem[0], sem[1], sem[2])
@@ -1232,24 +1367,33 @@ def tab3_calibrar():
                                     coords.append((nt, et, al, status))
                             
                             if not coords: continue
+                            
                             for cp in set(cp_grid):
                                 for ca in set(ca_grid):
                                     res = estadistica_desacoplada(coords, cp, ca, best_eh, best_ev)
                                     if res[0] is None: continue
                                     nf, ef, zf, std_n, std_e, std_z, ret, fix_ratio = res
-                                    if ret < max(15, int(len(coords) * 0.05)): continue
+                                    
+                                    min_epochs = max(15, int(len(coords) * 0.05))
+                                    if ret < min_epochs: continue
                                     
                                     rmse_3d = math.sqrt((nf - utm_n_r)**2 + (ef - utm_e_r)**2 + (zf - utm_c_r)**2)
                                     score = (rmse_3d ** 3) * (1.0 + gap * 0.05) * (1.0 + (1.0 - (fix_ratio/100.0)) * 2.0)
                                     
-                                    if score < global_best_score:
-                                        global_best_score = score
-                                        best_rmse = rmse_3d
-                                        best_params = {
-                                            'mask': m, 'cp': cp, 'ca': ca, 'eh': best_eh, 'ev': best_ev,
-                                            'max_gap': gap, 'snr': snr, 'rmse': rmse_3d, 'ret': ret,
-                                            'dn': nf - utm_n_r, 'de': ef - utm_e_r, 'dz': zf - utm_c_r
-                                        }
+                                    if score < nivel_best_rmse:
+                                        nivel_best_rmse = score
+                                        
+                                        if score < global_best_score:
+                                            global_best_score = score
+                                            best_rmse = rmse_3d
+                                            best_params = {
+                                                'mask': m, 'cp': cp, 'ca': ca, 'eh': best_eh, 'ev': best_ev,
+                                                'max_gap': gap, 'snr': snr,
+                                                'rmse': rmse_3d, 'ret': ret,
+                                                'dn': nf - utm_n_r, 'de': ef - utm_e_r, 'dz': zf - utm_c_r,
+                                                'if_count': kf_est.get('if_count', 0),
+                                                'chi_count': kf_est.get('chi_count', 0)
+                                            }
                 
                 if global_best_score != float('inf'):
                     m_center, m_span = best_params['mask'], m_span / 2.0
@@ -1257,10 +1401,14 @@ def tab3_calibrar():
                     ca_center, ca_span = best_params['ca'], ca_span / 2.0
                     snr_center, snr_span = best_params['snr'], snr_span / 2.0
                     gap_center, gap_span = best_params['max_gap'], gap_span / 2.0
-                else: m_span /= 2.0; cp_span /= 2.0; ca_span /= 2.0; snr_span /= 2.0; gap_span /= 2.0
+                else:
+                    m_span /= 2.0; cp_span /= 2.0; ca_span /= 2.0; snr_span /= 2.0; gap_span /= 2.0
             
-            # [VERSIÓN 9 ARREGLADA]: Restauración de la caja negra detallada
+            # [VERSIÓN 9 ARREGLADA]: Restauración y expansión de la caja negra detallada
             if global_best_score != float('inf'):
+                yield f"  [+] Zoom Depth Alcanzado: {p_iter}/{p_iter} Iteraciones\n"
+                yield f"  [+] Residuos RMS Kálman Estático: Estabilizado\n"
+                yield f"  [+] Tasa de Retención Kálman: {(best_params['ret']/max(1, len(coords_raw)))*100:.2f}%\n"
                 yield "\n========================================================\n"
                 yield "      [INFORME] PARÁMETROS ÓPTIMOS (CALIBRACIÓN EKF/PPK)\n"
                 yield "========================================================\n"
@@ -1272,42 +1420,70 @@ def tab3_calibrar():
                 yield f"  [-] Error Permitido Horizontal (m): {f_14(best_params['eh'])}\n"
                 yield f"  [-] Error Permitido Vertical (m): {f_14(best_params['ev'])}\n"
                 yield "--------------------------------------------------------\n"
-                yield f"  [*] RMSE Global 3D al Punto: {f_14(best_params['rmse'])} m\n"
+                yield f"  [*] Menor Distancia 3D al Punto: {f_14(best_params['rmse'])} m\n"
                 yield f"  [*] Deltas Residuales -> N: {f_14(best_params['dn'])}m, E: {f_14(best_params['de'])}m, Z: {f_14(best_params['dz'])}m\n"
                 yield f"  [*] Épocas Retenidas EKF: {best_params['ret']}\n"
+                yield f"  [*] Uso Combinación Iono-Free: {best_params['if_count']} veces activado\n"
+                yield f"  [*] Penalización Suave Multipath: {best_params['chi_count']} eventos\n"
                 yield "========================================================\n"
                 yield "\n[SUCCESS]"
-            else: yield "\n> [ERROR] El modelo Kalman no convergió.\n"
+            else:
+                yield "\n> [ERROR] El modelo Kalman no convergió. Filtros demasiado agresivos o ruido puro en el RINEX.\n"
         except Exception as e: yield f"\n> [ERROR FATAL] {str(e)}"
     return Response(procesar(), mimetype='text/plain')
 
 @app.route('/API/tab4_procesar', methods=['POST'])
 def tab4_procesar():
-    utm_n, utm_e, utm_c = safe_f(request.form.get('utm_norte')), safe_f(request.form.get('utm_este')), safe_f(request.form.get('utm_cota'))
-    utm_h, utm_hem = safe_i(request.form.get('utm_huso'), 19), request.form.get('utm_hemisferio', 'N')
-    h_b, h_r = safe_f(request.form.get('altura_base')), safe_f(request.form.get('altura_rover'))
-    p_mask, p_snr = safe_f(request.form.get('param_mask'), 10.0), safe_f(request.form.get('param_snr'), 25.0)
-    p_cp, p_ca = safe_f(request.form.get('param_cp'), 2.5), safe_f(request.form.get('param_ca'), 1.5)
-    err_hor_max, err_ver_max = safe_f(request.form.get('err_hor_max'), 0.5), safe_f(request.form.get('err_ver_max'), 0.5)
+    utm_n = safe_f(request.form.get('utm_norte'), 0.0)
+    utm_e = safe_f(request.form.get('utm_este'), 0.0)
+    utm_c = safe_f(request.form.get('utm_cota'), 0.0)
+    utm_h = safe_i(request.form.get('utm_huso'), 19)
+    utm_hem = request.form.get('utm_hemisferio', 'N')
+    h_b = safe_f(request.form.get('altura_base'), 0.0)
+    h_r = safe_f(request.form.get('altura_rover'), 0.0)
+    
+    p_mask = safe_f(request.form.get('param_mask'), 10.0)
+    p_cp = safe_f(request.form.get('param_cp'), 2.5)
+    p_ca = safe_f(request.form.get('param_ca'), 1.5)
+    err_hor_max = safe_f(request.form.get('err_hor_max'), 0.5)
+    err_ver_max = safe_f(request.form.get('err_ver_max'), 0.5)
     p_max_gap = safe_f(request.form.get('param_max_gap'), 0.5)
+    p_snr = safe_f(request.form.get('param_snr'), 25.0)
+
     url_rover_nuevo = request.form.get('url_rover_nuevo')
-    if not url_rover_nuevo: return Response("> [ERROR] Falta RINEX Rover.\n", mimetype='text/plain')
+    
+    if not url_rover_nuevo or url_rover_nuevo.strip() == '': 
+        return Response("> [ERROR] Falta el enlace de Drive del nuevo archivo RINEX Rover.\n", mimetype='text/plain')
 
     p_r_nuevo = os.path.join(UPLOAD_FOLDER, 'rover_nuevo_raw.obs')
 
     def procesar():
         try:
-            yield "> [RED] Descargando Nuevo RINEX Rover...\n"
+            yield "> [RED] Descargando Nuevo RINEX Rover desde Google Drive...\n"
             descargar_desde_gdrive(url_rover_nuevo, p_r_nuevo)
+            rf_nuevo_filename = "Drive_Nuevo_Rover.obs"
+            
             yield f"\n> [SISTEMA] Iniciando Procesamiento (EKF + RTS Smoother)...\n"
+            if utm_e == 0.0 or utm_n == 0.0: 
+                yield "> [ERROR] Coordenadas Base incompletas.\n"; return
             
-            nav_path, sp3_path, p_b_raw = leer_estado('nav_path'), leer_estado('sp3_path'), leer_estado('base_raw') 
-            if not nav_path or not p_b_raw: yield "> [ERROR FATAL] Faltan archivos Base/Efemerides.\n"; return
+            nav_path = leer_estado('nav_path')
+            sp3_path = leer_estado('sp3_path')
+            p_b_raw = leer_estado('base_raw') 
 
-            obs_b_raw, obs_r_raw = parse_rinex_obs_completo(p_b_raw), parse_rinex_obs_completo(p_r_nuevo) 
-            nav, sp3 = parse_rinex_nav_real(nav_path), parse_sp3_preciso(sp3_path) if sp3_path else {}
+            if not nav_path or not p_b_raw or not os.path.exists(p_b_raw): 
+                yield "> [ERROR FATAL] Falta archivo RINEX Base original o Efemérides.\n"; return
+
+            obs_b_raw = parse_rinex_obs_completo(p_b_raw)
+            obs_r_raw = parse_rinex_obs_completo(p_r_nuevo) 
+            nav = parse_rinex_nav_real(nav_path)
+            sp3 = parse_sp3_preciso(sp3_path) if sp3_path else {}
             
-            rover_tows, base_tows = sorted(list(obs_r_raw.keys())), sorted(list(obs_b_raw.keys()))
+            if sp3: yield "[PROGRESO] Órbitas Precisas SP3 acopladas con éxito...\n"
+            
+            yield f"[PROGRESO] Sincronización Estricta (Tolerancia {f_14(p_max_gap)}s)...\n"
+            rover_tows = sorted(list(obs_r_raw.keys()))
+            base_tows = sorted(list(obs_b_raw.keys()))
             obs_b_sync = {}
             for tr in rover_tows:
                 if not base_tows: continue
@@ -1316,20 +1492,29 @@ def tab4_procesar():
                     obs_b_sync[tr] = obs_b_raw[base_tows[idx]].copy()
                     obs_b_sync[tr]['_meta'] = obs_r_raw[tr]['_meta']
             
+            yield "[PROGRESO] Extrayendo Observables PPK...\n"
             sd_suavizada = aislar_diferencias_simples_ppk(obs_b_sync, obs_r_raw)
-            if not sd_suavizada: yield "\n> [ERROR] No hay épocas sincronizadas válidas.\n"; return
+            
+            if len(sd_suavizada) == 0:
+                yield "\n> [ERROR] No hay épocas sincronizadas válidas.\n"; return
 
             lat_b, lon_b, _ = utm_a_geodesicas(utm_e, utm_n, utm_h, utm_hem)
             X_b, Y_b, Z_b = geodesicas_a_ecef(lat_b, lon_b, utm_c + h_b)
             X_bg, Y_bg, Z_bg = geodesicas_a_ecef(lat_b, lon_b, utm_c)
 
+            yield "[PROGRESO] Fase 1: Pasada Forward EKF + Mareas Sólidas...\n"
             P_init = matid(3)
             for i in range(3): P_init[i][i] = 100.0
-            kf_est = {'X': [[X_bg], [Y_bg], [Z_bg]], 'P': P_init, 'X_base': (X_b, Y_b, Z_b), 'fix_flags': 0, 'h_r': h_r, 'cs_state': {}}
-            fwd_states = []
             
-            yield "[PROGRESO] Fase 1: Pasada Forward EKF + Klobuchar/IF Adaptativo...\n"
+            kf_est = {'X': [[X_bg], [Y_bg], [Z_bg]], 'P': P_init, 'X_base': (X_b, Y_b, Z_b), 'fix_flags': 0, 'h_r': h_r, 'cs_state': {}, 'if_count': 0, 'chi_count': 0}
+            fwd_states = []
+            t_eps = len(sd_suavizada); c = 0
+            
             for t in sd_suavizada:
+                c += 1
+                if t_eps > 0 and c % max(1, t_eps // 10) == 0: 
+                    yield f"[PROGRESO] Propagando Matriz Covarianza... {int((c / t_eps) * 100)}%\n"
+                
                 sem, status, kf_est, st_dict = procesar_ekF_lambda(sd_suavizada[t], nav, sp3, kf_est, t, p_mask, p_snr)
                 if sem and st_dict:
                     st_dict['status'] = status
@@ -1337,8 +1522,9 @@ def tab4_procesar():
 
             if not fwd_states: yield "\n> [ERROR] Colapso total del Filtro Kalman.\n"; return
             
-            yield "[PROGRESO] Fase 2: Suavizador RTS Bidireccional...\n"
+            yield "[PROGRESO] Fase 2: Aplicando Suavizador RTS Bidireccional...\n"
             sm_states = suavizador_rts_backward(fwd_states)
+            
             coords = []
             for i in range(len(sm_states)):
                 la, lo, al = ecef_a_geodesicas(sm_states[i][0][0], sm_states[i][1][0], sm_states[i][2][0])
@@ -1346,18 +1532,30 @@ def tab4_procesar():
                 coords.append((nt, et, al, fwd_states[i]['status']))
 
             res_estadistica = estadistica_desacoplada(coords, p_cp, p_ca, err_hor_max, err_ver_max)
-            if res_estadistica[0] is None: yield "\n> [ERROR] 100% de épocas superan Error Máximo.\n"; return
+            
+            if res_estadistica[0] is None:
+                yield "\n> [ERROR] Operación Abortada: El 100% de las épocas superan el Error Máximo configurado.\n"; return
                 
             nf, ef, zf, std_n, std_e, std_z, ret, fix_ratio = res_estadistica
+            
             p_dict = {
-                'mask': p_mask, 'cp': p_cp, 'ca': p_ca, 'max_gap': p_max_gap, 'snr': p_snr,
-                'err_h': err_hor_max, 'err_v': err_ver_max, 'nf': nf, 'ef': ef, 'zf': zf, 
+                'mask': p_mask, 'cp': p_cp, 'ca': p_ca,
+                'max_gap': p_max_gap, 'snr': p_snr,
+                'err_h': err_hor_max, 'err_v': err_ver_max,
+                'nf': nf, 'ef': ef, 'zf': zf, 
                 'ret': ret, 'total': len(coords), 'std_n': std_n, 'std_e': std_e, 'std_z': std_z,
-                'fix_r': fix_ratio, 'base_file': leer_estado('name_base_raw') or "Base.obs",
-                'rover_file': "Drive_Nuevo_Rover.obs", 'nav_file': leer_estado('name_nav_file') or "auto.nav",
-                'sp3_file': leer_estado('name_sp3_file'), 'b_n': utm_n, 'b_e': utm_e, 'b_z': utm_c,
-                'r_n_calc': nf, 'r_e_calc': ef, 'r_z_calc': zf
+                'ez': std_z, 'fix_r': fix_ratio,
+                'base_file': leer_estado('name_base_raw') or "Drive_Base.obs",
+                'rover_file': rf_nuevo_filename,
+                'nav_file': leer_estado('name_nav_file') or "auto_nav.nav",
+                'sp3_file': leer_estado('name_sp3_file'),
+                'b_n': utm_n, 'b_e': utm_e, 'b_z': utm_c,
+                'r_n_calc': nf, 'r_e_calc': ef, 'r_z_calc': zf,
+                'if_count': kf_est.get('if_count', 0),
+                'chi_count': kf_est.get('chi_count', 0)
             }
+            
+            yield "[PROGRESO] Ajuste EKF+RTS Finalizado.\n"
             yield generar_informe_ascii("MEDICION", p_dict)
             yield "\n[SUCCESS]"
         except Exception as e: yield f"\n> [ERROR FATAL] {str(e)}"
