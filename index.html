@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GNSS Engine L1-Sinc DGPS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+
+    <style>
+        .console { font-family: 'Courier New', Courier, monospace; background-color: #050505; color: #00ff33; white-space: pre-wrap; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .disabled-tab { opacity: 0.5; pointer-events: none; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
+
+    <div id="login-container" class="flex items-center justify-center min-h-screen px-4">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-2xl border border-gray-700 w-full max-w-md">
+            <div class="text-center mb-6">
+                <h2 class="text-2xl font-bold text-green-400">GNSSJP PRO</h2>
+                <p class="text-gray-400 text-sm mt-1">Autenticación de Operador Geodésico</p>
+            </div>
+            <form id="login-form" onsubmit="loginUsuario(event)">
+                <div class="mb-4">
+                    <label class="block text-sm mb-1 text-gray-300">Correo Electrónico:</label>
+                    <input type="email" id="login-email" required class="w-full bg-gray-700 p-2.5 rounded border border-gray-600 focus:outline-none focus:border-green-500 text-white">
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm mb-1 text-gray-300">Contraseña:</label>
+                    <input type="password" id="login-password" required class="w-full bg-gray-700 p-2.5 rounded border border-gray-600 focus:outline-none focus:border-green-500 text-white">
+                </div>
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-500 py-2.5 rounded font-bold transition shadow-lg">Ingresar al Sistema</button>
+            </form>
+            <div id="login-error" class="mt-4 text-red-400 text-sm text-center font-semibold hidden"></div>
+        </div>
+    </div>
+
+    <div id="app-container" class="container mx-auto p-4 max-w-5xl hidden">
+        <header class="border-b border-gray-700 pb-4 mb-6 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-green-400">GNSSJP PRO - Motor Geodésico Avanzado</h1>
+                <p class="text-gray-400 text-sm">Cálculo Diferencial con Órbitas Precisas SP3 y Mallas IONEX | "Dato mata relato"</p>
+            </div>
+            <div>
+                <button onclick="cerrarSesion()" class="bg-gray-700 hover:bg-red-600 text-white text-xs font-bold py-2 px-4 rounded transition">
+                    Cerrar Sesión
+                </button>
+            </div>
+        </header>
+
+        <nav class="flex space-x-2 bg-gray-800 p-2 rounded mb-6" id="tabs-nav">
+            <button onclick="switchTab(1)" id="btn-tab1" class="px-4 py-2 rounded bg-blue-600 font-bold text-sm sm:text-base">1. Datos Raw (Calibración)</button>
+            <button onclick="switchTab(2)" id="btn-tab2" class="px-4 py-2 rounded bg-gray-700 disabled-tab text-sm sm:text-base">2. Inyección Orbital (SP3)</button>
+            <button onclick="switchTab(3)" id="btn-tab3" class="px-4 py-2 rounded bg-gray-700 disabled-tab text-sm sm:text-base">3. Calibración Exacta</button>
+            <button onclick="switchTab(4)" id="btn-tab4" class="px-4 py-2 rounded bg-gray-700 disabled-tab text-sm sm:text-base">4. Procesar Punto</button>
+        </nav>
+
+        <section id="tab1" class="tab-content active bg-gray-800 p-6 rounded shadow-lg">
+            <h2 class="text-xl mb-4 font-semibold border-b border-gray-600 pb-2">Archivos de Observación (Descarga GDrive)</h2>
+            <form id="form-tab1" onsubmit="submitForm(event, '/API/tab1_homogenizar', 'console1', 2)">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm mb-1 text-blue-300 font-bold">Enlace Drive - Base Pivote (.obs):</label>
+                        <input type="text" name="url_base" required placeholder="https://drive.google.com/file/d/..." class="w-full bg-gray-700 p-2 rounded border border-blue-500 text-sm text-white focus:outline-none focus:border-blue-400">
+                    </div>
+                    <div>
+                        <label class="block text-sm mb-1 text-green-300 font-bold">Enlace Drive - Rover Calibración (.obs):</label>
+                        <input type="text" name="url_rover" required placeholder="https://drive.google.com/file/d/..." class="w-full bg-gray-700 p-2 rounded border border-green-500 text-sm text-white focus:outline-none focus:border-green-400">
+                    </div>
+                </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold transition">Descargar y Sincronizar Épocas</button>
+            </form>
+            <div id="console1" class="console p-4 mt-4 h-64 overflow-y-auto border border-gray-700 rounded"></div>
+            <button id="btn-pdf-tab1" onclick="descargarTextoPDF('console1', 'Informe_Sincronizacion')" class="hidden mt-4 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded w-full shadow-lg">Descargar Informe de Épocas PDF</button>
+        </section>
+
+        <section id="tab2" class="tab-content bg-gray-800 p-6 rounded shadow-lg">
+            <h2 class="text-xl mb-4 font-semibold border-b border-gray-600 pb-2">Inyección de Órbitas Precisas (SP3)</h2>
+            <p class="text-sm text-gray-400 mb-4">Para evadir los bloqueos de Payload de Vercel, carga manualmente el archivo .SP3 (descomprimido). El servidor descargará el archivo .NAV de respaldo (11+ MB) de forma automática en segundo plano.</p>
+            <form id="form-tab2" onsubmit="submitForm(event, '/API/tab2_efemerides', 'console2', 3, true)">
+                <div class="grid grid-cols-1 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm mb-1 font-bold text-purple-400">Órbitas Precisas (.sp3) [REQUERIDO]:</label>
+                        <input type="file" name="file_sp3" required class="w-full bg-gray-700 p-2 rounded border border-purple-500">
+                        <p class="text-xs text-purple-300 mt-1">Sube el archivo descomprimido (.sp3) extraído con la app IGS Downloader.</p>
+                    </div>
+                </div>
+                <button type="submit" class="w-full bg-purple-600 hover:bg-purple-500 py-2 rounded font-bold transition">Cargar SP3 y Autocompletar Efemérides NAV</button>
+            </form>
+            <div id="console2" class="console p-4 mt-4 h-48 overflow-y-auto border border-gray-700 rounded"></div>
+            <button id="btn-pdf-tab2" onclick="descargarTextoPDF('console2', 'Informe_Efemerides')" class="hidden mt-4 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded w-full shadow-lg">Descargar PDF de Efemérides</button>
+        </section>
+
+        <section id="tab3" class="tab-content bg-gray-800 p-6 rounded shadow-lg">
+            <h2 class="text-xl mb-4 font-semibold border-b border-gray-600 pb-2">Investigación de Operaciones: Búsqueda y Calibración Exacta</h2>
+            <p class="text-sm text-gray-400 mb-4">Simulador Monte Carlo pentadimensional continuo (14 decimales IEEE 754). Minimiza el RMSE contra una coordenada Rover conocida optimizando 5 variables críticas.</p>
+            <form id="form-tab3" onsubmit="submitForm(event, '/API/tab3_calibrar', 'console3', 4)">
+                
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                    <div class="sm:col-span-3"><h3 class="text-purple-400 font-bold text-sm">COORDENADAS ABSOLUTAS BASE (ESTACIÓN FIJA)</h3></div>
+                    <div><label class="block text-xs">Norte (Y):</label><input type="number" step="any" name="utm_norte" required class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Este (X):</label><input type="number" step="any" name="utm_este" required class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Cota Elipsoidal (Z):</label><input type="number" step="any" name="utm_cota" required class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Huso UTM:</label><input type="number" name="utm_huso" value="19" required class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Hemisferio:</label>
+                        <select name="utm_hemisferio" class="w-full bg-gray-700 p-1 text-sm rounded">
+                            <option value="N">Norte (N)</option>
+                            <option value="S">Sur (S)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-3"><h3 class="text-green-400 font-bold text-sm">COORDENADAS VERDADERAS ROVER (PUNTO DE CONTROL)</h3></div>
+                    <div><label class="block text-xs">Norte Rover (Y):</label><input type="number" step="any" name="utm_norte_r" required class="w-full bg-gray-700 p-1 text-sm rounded border border-green-500"></div>
+                    <div><label class="block text-xs">Este Rover (X):</label><input type="number" step="any" name="utm_este_r" required class="w-full bg-gray-700 p-1 text-sm rounded border border-green-500"></div>
+                    <div><label class="block text-xs">Cota Rover (Z):</label><input type="number" step="any" name="utm_cota_r" required class="w-full bg-gray-700 p-1 text-sm rounded border border-green-500"></div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-2"><h3 class="text-yellow-400 font-bold text-sm">ALTURAS DE ANTENA (METROS)</h3></div>
+                    <div><label class="block text-xs">Altura Antena Base (m):</label><input type="number" step="any" name="altura_base" value="0.000" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Altura Antena Rover (m):</label><input type="number" step="any" name="altura_rover" value="0.000" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                </div>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-2"><h3 class="text-red-400 font-bold text-sm">PARÁMETROS HARD FILTER (Calculados y Editables)</h3></div>
+                    <div><label class="block text-xs text-red-300 font-bold">Error Permitido Horizontal (m):</label><input type="number" step="any" name="err_hor_max" value="1.50" class="w-full bg-gray-700 p-1 text-sm rounded border border-red-500"></div>
+                    <div><label class="block text-xs text-red-300 font-bold">Error Permitido Vertical (m):</label><input type="number" step="any" name="err_ver_max" value="2.00" class="w-full bg-gray-700 p-1 text-sm rounded border border-red-500"></div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-3"><h3 class="text-blue-400 font-bold text-sm">PARÁMETROS ESTADÍSTICOS Y MÁSCARA (Calculados y Editables)</h3></div>
+                    <div><label class="block text-xs">Máscara Elevación (°):</label><input type="number" step="any" name="param_mask" value="5.78" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Filtro Sigma Plan (cp):</label><input type="number" step="any" name="param_cp" value="2.50" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Filtro Sigma Alt (ca):</label><input type="number" step="any" name="param_ca" value="3.00" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-3"><h3 class="text-orange-400 font-bold text-sm">PARÁMETROS AVANZADOS</h3></div>
+                    <div>
+                        <label class="block text-xs" title="Permite capturar la deriva natural de reloj de dispositivos Android sin perder épocas.">Tolerancia de Sincronización (segundos):</label>
+                        <input type="number" step="any" name="param_max_gap" value="0.50" class="w-full bg-gray-700 p-1 text-sm rounded">
+                    </div>
+                    <div>
+                        <label class="block text-xs" title="Purga señales rebotadas (multipath). Valores < 25.0 introducen error de medición.">Máscara SNR (dBHz):</label>
+                        <input type="number" step="any" name="param_snr" value="18.50" class="w-full bg-gray-700 p-1 text-sm rounded">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-purple-300 font-bold" title="Controla la profundidad de la cuadrícula. Valores > 10 exigen más tiempo de servidor Vercel.">Niveles de Refinamiento (Iteraciones):</label>
+                        <input type="number" step="1" min="1" max="30" name="param_iter" value="12" class="w-full bg-gray-700 p-1 text-sm rounded border border-purple-500 focus:outline-none focus:border-purple-300">
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full bg-purple-600 hover:bg-purple-500 py-3 rounded font-bold transition text-lg mt-2 shadow-lg">Ejecutar Motor de Calibración Pentadimensional</button>
+            </form>
+            <div id="console3" class="console p-4 mt-4 h-64 overflow-y-auto border border-gray-700 rounded"></div>
+            <button id="btn-pdf-tab3" onclick="descargarTextoPDF('console3', 'Informe_Calibracion_RMSE')" class="hidden mt-4 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded w-full shadow-lg">Descargar Informe de Calibración PDF</button>
+        </section>
+
+        <section id="tab4" class="tab-content bg-gray-800 p-6 rounded shadow-lg">
+            <h2 class="text-xl mb-4 font-semibold border-b border-gray-600 pb-2">Ajuste de Red DGPS Diferencial (Cálculo Rover Desconocido)</h2>
+            <form id="form-tab4" onsubmit="submitForm(event, '/API/tab4_procesar', 'console4', null)">
+                
+                <div class="grid grid-cols-1 gap-4 mb-4">
+                    <div>
+                        <h3 class="text-blue-400 font-bold text-sm mb-2">NUEVO ARCHIVO ROVER (PUNTO DESCONOCIDO)</h3>
+                        <label class="block text-xs text-blue-300 font-bold">Enlace Drive - RINEX Rover (.obs):</label>
+                        <input type="text" name="url_rover_nuevo" required placeholder="https://drive.google.com/file/d/..." class="w-full bg-gray-700 p-2 rounded border border-blue-500 text-sm text-white focus:outline-none focus:border-blue-400">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-3"><h3 class="text-yellow-400 font-bold text-sm">COORDENADA ABSOLUTA BASE (AUTO-LLENADO)</h3></div>
+                    <div><label class="block text-xs">Norte (Y):</label><input type="number" step="any" name="utm_norte" required class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Este (X):</label><input type="number" step="any" name="utm_este" required class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Cota Elipsoidal (Z):</label><input type="number" step="any" name="utm_cota" required class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Huso UTM:</label><input type="number" name="utm_huso" value="19" required class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Hemisferio:</label>
+                        <select name="utm_hemisferio" class="w-full bg-gray-700 p-1 text-sm rounded">
+                            <option value="N">Norte (N)</option>
+                            <option value="S">Sur (S)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div><label class="block text-xs">Altura Antena Base (m):</label><input type="number" step="any" name="altura_base" value="0.000" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Altura Antena Rover (m):</label><input type="number" step="any" name="altura_rover" value="0.000" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-2"><h3 class="text-red-400 font-bold text-sm">FILTRO EXCLUYENTE (AUTO-LLENADO / EDITABLE)</h3></div>
+                    <div><label class="block text-xs text-red-300 font-bold">Error Permitido Horizontal (m):</label><input type="number" step="any" name="err_hor_max" value="1.50" class="w-full bg-gray-700 p-1 text-sm rounded border border-red-500"></div>
+                    <div><label class="block text-xs text-red-300 font-bold">Error Permitido Vertical (m):</label><input type="number" step="any" name="err_ver_max" value="2.00" class="w-full bg-gray-700 p-1 text-sm rounded border border-red-500"></div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-3"><h3 class="text-blue-400 font-bold text-sm">PARÁMETROS CALIBRADOS (AUTO-LLENADO / EDITABLE)</h3></div>
+                    <div><label class="block text-xs">Máscara Elevación (°):</label><input type="number" step="any" name="param_mask" value="5.78" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Filtro Sigma Plan (cp):</label><input type="number" step="any" name="param_cp" value="2.50" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                    <div><label class="block text-xs">Filtro Sigma Alt (ca):</label><input type="number" step="any" name="param_ca" value="3.00" class="w-full bg-gray-700 p-1 text-sm rounded"></div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 border-t border-gray-700 pt-4">
+                    <div class="sm:col-span-2"><h3 class="text-orange-400 font-bold text-sm">PARÁMETROS AVANZADOS (AUTO-LLENADO / EDITABLE)</h3></div>
+                    <div>
+                        <label class="block text-xs" title="Permite capturar la deriva natural de reloj de dispositivos Android sin perder épocas.">Tolerancia de Sincronización (segundos):</label>
+                        <input type="number" step="any" name="param_max_gap" value="0.50" class="w-full bg-gray-700 p-1 text-sm rounded">
+                    </div>
+                    <div>
+                        <label class="block text-xs" title="Purga señales rebotadas (multipath). Valores < 25.0 introducen error de medición.">Máscara SNR (dBHz):</label>
+                        <input type="number" step="any" name="param_snr" value="18.50" class="w-full bg-gray-700 p-1 text-sm rounded">
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-500 py-3 rounded font-bold transition text-lg mt-2 shadow-lg">Procesar Punto Desconocido</button>
+            </form>
+            <div id="console4" class="console p-4 mt-4 h-96 overflow-y-auto border border-gray-700 rounded"></div>
+            <button id="btn-pdf-tab4" onclick="descargarTextoPDF('console4', 'Informe_Geodesico_DGPS')" class="hidden mt-4 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded w-full shadow-lg">Descargar PDF de Resultados</button>
+        </section>
+    </div>
+
+    <script>
+        // --- CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE ---
+        const firebaseConfig = {
+          apiKey: "AIzaSyBAASJamPDpSKU6JZx88oLNQprgwkk3DZs",
+          authDomain: "gpsj-6790c.firebaseapp.com",
+          projectId: "gpsj-6790c",
+          storageBucket: "gpsj-6790c.firebasestorage.app",
+          messagingSenderId: "558545141519",
+          appId: "1:558545141519:web:d21e7360d54db4d84d887a"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+
+        // 1. GENERADOR DE HUELLA DACTILAR DEL DISPOSITIVO
+        let localToken = localStorage.getItem('gnssjp_token');
+        if (!localToken) {
+            localToken = Date.now().toString() + Math.random().toString(36).substring(2);
+            localStorage.setItem('gnssjp_token', localToken);
+        }
+
+        let heartbeatTimer = null;
+
+        // 2. MOTOR DE LATIDO (HEARTBEAT) - Mantiene la sesión viva
+        async function startSessionHeartbeat(user) {
+            const beat = async () => {
+                try {
+                    await user.reload(); // Obliga a leer el dato real desde el servidor de Google
+                    const currentData = user.displayName;
+                    
+                    if (currentData) {
+                        const parts = currentData.split("_");
+                        // Si el token que está en la nube ya no es el nuestro, alguien más tomó la sesión.
+                        if (parts.length === 2 && parts[1] !== localToken) {
+                            stopSessionHeartbeat();
+                            alert("SESIÓN FINALIZADA: Se ha iniciado sesión en otro dispositivo. Por seguridad, esta ventana se cerrará.");
+                            window.location.reload(); 
+                            return;
+                        }
+                    }
+
+                    // Escribir en el perfil: "Estoy vivo en este momento" + mi huella local
+                    const payload = Date.now() + "_" + localToken;
+                    await user.updateProfile({ displayName: payload });
+                } catch (e) {
+                    // Silenciar errores temporales de red para no molestar la ejecución
+                }
+            };
+            await beat(); // Latir inmediatamente al entrar
+            heartbeatTimer = setInterval(beat, 45000); // Latir cada 45 segundos
+        }
+
+        function stopSessionHeartbeat() {
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+        }
+
+        // 3. CONTROL CENTRAL DE SESIONES (LA REGLA DE LUIS Y SU HIJO)
+        auth.onAuthStateChanged(async (user) => {
+            const loginContainer = document.getElementById('login-container');
+            const appContainer = document.getElementById('app-container');
+            const errorDiv = document.getElementById('login-error');
+            
+            if (user) {
+                const currentData = user.displayName; 
+                let isLockedOut = false;
+
+                if (currentData) {
+                    const parts = currentData.split("_");
+                    if (parts.length === 2) {
+                        const lastBeat = parseInt(parts[0]);
+                        const activeToken = parts[1];
+                        const timeSinceLastBeat = Date.now() - lastBeat;
+
+                        // REGLA MATEMÁTICA: Si el token guardado es diferente al de esta computadora Y han pasado menos de 90 segundos desde el último latido...
+                        // Significa que Luis (el primer dispositivo) está activo ahora mismo. Bloqueamos al hijo.
+                        if (activeToken !== localToken && timeSinceLastBeat < 90000) {
+                            isLockedOut = true;
+                        }
+                    }
+                }
+
+                if (isLockedOut) {
+                    errorDiv.innerText = "ACCESO DENEGADO: El usuario ya está activo en otro dispositivo al mismo tiempo. Si se cerró la otra pantalla bruscamente, espere 2 minutos para que el candado caduque.";
+                    errorDiv.classList.remove('hidden');
+                    await auth.signOut();
+                    return; // Expulsión fulminante
+                }
+
+                // SI PASA EL FILTRO: Entramos y empezamos a latir
+                startSessionHeartbeat(user);
+
+                loginContainer.classList.add('hidden');
+                appContainer.classList.remove('hidden');
+                errorDiv.innerText = "";
+                document.getElementById('login-form').reset();
+            } else {
+                stopSessionHeartbeat();
+                appContainer.classList.add('hidden');
+                loginContainer.classList.remove('hidden');
+            }
+        });
+
+        async function loginUsuario(e) {
+            e.preventDefault();
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+            const errorDiv = document.getElementById('login-error');
+            errorDiv.classList.add('hidden');
+            
+            try {
+                await auth.signInWithEmailAndPassword(email, password);
+            } catch (error) {
+                errorDiv.innerText = "Error: " + error.message;
+                errorDiv.classList.remove('hidden');
+            }
+        }
+
+        async function cerrarSesion() {
+            if (auth.currentUser) {
+                stopSessionHeartbeat();
+                try {
+                    // Borramos la huella inmediatamente para que el hijo pueda entrar sin esperar los 2 minutos
+                    await auth.currentUser.updateProfile({ displayName: "" });
+                } catch (error) {}
+            }
+            auth.signOut();
+        }
+
+        function switchTab(num) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab' + num).classList.add('active');
+            
+            document.querySelectorAll('#tabs-nav button').forEach(el => {
+                el.classList.remove('bg-blue-600');
+                el.classList.add('bg-gray-700');
+            });
+            document.getElementById('btn-tab' + num).classList.remove('bg-gray-700');
+            document.getElementById('btn-tab' + num).classList.add('bg-blue-600');
+        }
+
+        async function submitForm(e, url, consoleId, nextTab, enableTab4 = false) {
+            e.preventDefault();
+            const form = e.target;
+            const data = new FormData(form);
+            const display = document.getElementById(consoleId);
+            display.textContent = "> Procesando la petición en el servidor...\n";
+            
+            const pdfButtons = ['btn-pdf-tab1', 'btn-pdf-tab2', 'btn-pdf-tab3', 'btn-pdf-tab4'];
+            pdfButtons.forEach(id => {
+                const btn = document.getElementById(id);
+                if(btn && consoleId === id.replace('btn-pdf-', 'console')) btn.classList.add('hidden');
+            });
+
+            let fullOutput = "";
+
+            try {
+                const response = await fetch(url, { method: 'POST', body: data });
+                if (!response.body) throw new Error("No se recibió cuerpo de respuesta del servidor.");
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    
+                    let text = decoder.decode(value, { stream: true });
+                    fullOutput += text;
+                    
+                    display.textContent = fullOutput;
+                    display.scrollTop = display.scrollHeight;
+                }
+
+                if (fullOutput.includes('[SUCCESS]')) {
+                    if (nextTab) {
+                        document.getElementById('btn-tab' + nextTab).classList.remove('disabled-tab');
+                    }
+                    if (enableTab4) {
+                        document.getElementById('btn-tab4').classList.remove('disabled-tab');
+                    }
+                    
+                    if (consoleId === 'console1') document.getElementById('btn-pdf-tab1').classList.remove('hidden');
+                    if (consoleId === 'console2') document.getElementById('btn-pdf-tab2').classList.remove('hidden');
+                    if (consoleId === 'console3') document.getElementById('btn-pdf-tab3').classList.remove('hidden');
+                    if (consoleId === 'console4') document.getElementById('btn-pdf-tab4').classList.remove('hidden');
+                    
+                    if (url === '/API/tab3_calibrar') {
+                        // Sincronizar coordenadas
+                        document.querySelector('#form-tab4 input[name="utm_norte"]').value = document.querySelector('#form-tab3 input[name="utm_norte"]').value;
+                        document.querySelector('#form-tab4 input[name="utm_este"]').value = document.querySelector('#form-tab3 input[name="utm_este"]').value;
+                        document.querySelector('#form-tab4 input[name="utm_cota"]').value = document.querySelector('#form-tab3 input[name="utm_cota"]').value;
+                        document.querySelector('#form-tab4 input[name="utm_huso"]').value = document.querySelector('#form-tab3 input[name="utm_huso"]').value;
+                        document.querySelector('#form-tab4 select[name="utm_hemisferio"]').value = document.querySelector('#form-tab3 select[name="utm_hemisferio"]').value;
+                        
+                        // Sincronizar alturas de antena
+                        document.querySelector('#form-tab4 input[name="altura_base"]').value = document.querySelector('#form-tab3 input[name="altura_base"]').value;
+                        document.querySelector('#form-tab4 input[name="altura_rover"]').value = document.querySelector('#form-tab3 input[name="altura_rover"]').value;
+                        
+                        document.querySelector('#form-tab4 input[name="param_max_gap"]').value = document.querySelector('#form-tab3 input[name="param_max_gap"]').value;
+                        document.querySelector('#form-tab4 input[name="param_snr"]').value = document.querySelector('#form-tab3 input[name="param_snr"]').value;
+
+                        const m_mask = fullOutput.match(/Máscara Elevación[^:]*:\s*([0-9.-]+)/);
+                        const m_cp = fullOutput.match(/Filtro Sigma Plan[^:]*:\s*([0-9.-]+)/);
+                        const m_ca = fullOutput.match(/Filtro Sigma Alt[^:]*:\s*([0-9.-]+)/);
+                        const m_eh = fullOutput.match(/Error Permitido Horizontal[^:]*:\s*([0-9.-]+)/);
+                        const m_ev = fullOutput.match(/Error Permitido Vertical[^:]*:\s*([0-9.-]+)/);
+                        const m_max_gap = fullOutput.match(/Tolerancia Sync[^:]*:\s*([0-9.-]+)/);
+                        const m_snr = fullOutput.match(/Máscara SNR[^:]*:\s*([0-9.-]+)/);
+                        
+                        if (m_mask && m_mask[1]) document.querySelector('#form-tab4 input[name="param_mask"]').value = m_mask[1];
+                        if (m_cp && m_cp[1]) document.querySelector('#form-tab4 input[name="param_cp"]').value = m_cp[1];
+                        if (m_ca && m_ca[1]) document.querySelector('#form-tab4 input[name="param_ca"]').value = m_ca[1];
+                        if (m_eh && m_eh[1]) document.querySelector('#form-tab4 input[name="err_hor_max"]').value = m_eh[1];
+                        if (m_ev && m_ev[1]) document.querySelector('#form-tab4 input[name="err_ver_max"]').value = m_ev[1];
+                        if (m_max_gap && m_max_gap[1]) document.querySelector('#form-tab4 input[name="param_max_gap"]').value = m_max_gap[1];
+                        if (m_snr && m_snr[1]) document.querySelector('#form-tab4 input[name="param_snr"]').value = m_snr[1];
+                    }
+                }
+
+            } catch (err) {
+                display.textContent += "\n[ERROR] " + err.message;
+            }
+        }
+
+        function descargarTextoPDF(consoleId, nombreBase) {
+            try {
+                const display = document.getElementById(consoleId);
+                if (!display) {
+                    alert("Consola no encontrada.");
+                    return;
+                }
+                const { jsPDF } = window.jspdf;
+                
+                let lineasCrudas = display.textContent.split('\n');
+                let reporteLimpio = lineasCrudas.filter(l => 
+                    !l.includes('[SUCCESS]') && 
+                    !l.includes('[PROGRESO]') &&
+                    l.trim() !== ''
+                ).map(l => l.startsWith('>') ? l.substring(1).trim() : l);
+
+                if (reporteLimpio.length === 0) {
+                    alert("No hay datos válidos para generar el reporte PDF.");
+                    return;
+                }
+
+                const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+                
+                doc.setFont("courier", "normal");
+                doc.setFontSize(10);
+                
+                let pos_y = 50; 
+                const pos_x = 40; 
+                const maxLineWidth = 530; 
+                
+                for(let i=0; i < reporteLimpio.length; i++) {
+                    let lineasDivididas = doc.splitTextToSize(reporteLimpio[i], maxLineWidth);
+                    for(let j=0; j < lineasDivididas.length; j++) {
+                        if (pos_y > 740) { 
+                            doc.addPage();
+                            pos_y = 50;
+                        }
+                        doc.text(lineasDivididas[j], pos_x, pos_y);
+                        pos_y += 14; 
+                    }
+                }
+                
+                doc.save(nombreBase + '_' + new Date().getTime() + '.pdf');
+            } catch (error) {
+                console.error("Error al generar el PDF: ", error);
+                alert("Ocurrió un error al generar el PDF. Revisa la consola del navegador.");
+            }
+        }
+    </script>
+</body>
+</html>
