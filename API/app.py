@@ -951,18 +951,18 @@ def generar_informe_homogeneizacion_detallado(base_name, rover_name, base_raw, r
         
         for t in tiempos:
             for s, data in obs[t].items():
-                if s != '_meta':
-                    if s[0] in c: c[s[0]] += 1
-                    sats_unicos.add(s)
-                    if 'C1' in data or 'L1' in data: tiene_l1 = True
-                    if 'C5' in data or 'L5' in data: tiene_l5 = True
-                    if 'S1' in data and data['S1'] > 0:
-                        snr_total += data['S1']
-                        snr_count += 1
-                    if 'S5' in data and data['S5'] > 0:
-                        snr_total += data['S5']
-                        snr_count += 1
-                        
+                if s == '_meta': continue
+                if s[0] in c: c[s[0]] += 1
+                sats_unicos.add(s)
+                if data.get('C1') or data.get('L1'): tiene_l1 = True
+                if data.get('C5') or data.get('L5'): tiene_l5 = True
+                if data.get('S1', 0) > 0:
+                    snr_total += data['S1']
+                    snr_count += 1
+                if data.get('S5', 0) > 0:
+                    snr_total += data['S5']
+                    snr_count += 1
+                    
         tipo_senal = "L1 + L5 (Doble Frecuencia)" if (tiene_l1 and tiene_l5) else ("L1 (Monofrecuencia)" if tiene_l1 else "Desconocida")
         avg_snr = (snr_total / snr_count) if snr_count > 0 else 0.0
         total_sats = len(sats_unicos)
@@ -991,14 +991,14 @@ def generar_informe_homogeneizacion_detallado(base_name, rover_name, base_raw, r
 [1] PARÁMETROS DE CONTROL (BASE) : {base_name}
   [-] Tipo de Señal GNSS        : {senal_b}
   [-] Satélites Únicos Vistos   : {sats_b}
-  [-] Potencia Promedio (SNR)   : {f_14(snr_b)} dBHz
+  [-] Potencia Promedio (SNR)   : {snr_b:.1f} dBHz
   [-] Épocas Crudas Registradas : {eb}
   [-] Ventana de Observación    : {b_ini_str} - {b_fin_str}
 
 [2] PARÁMETROS DEL MÓVIL (ROVER) : {rover_name}
   [-] Tipo de Señal GNSS        : {senal_r}
   [-] Satélites Únicos Vistos   : {sats_r}
-  [-] Potencia Promedio (SNR)   : {f_14(snr_r)} dBHz
+  [-] Potencia Promedio (SNR)   : {snr_r:.1f} dBHz
   [-] Épocas Crudas Registradas : {er}
   [-] Ventana de Observación    : {r_ini_str} - {r_fin_str}
 
