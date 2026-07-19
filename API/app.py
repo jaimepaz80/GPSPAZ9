@@ -935,20 +935,43 @@ def generar_informe_homogeneizacion_detallado(base_name, rover_name, base_raw, r
     def get_stats(obs):
         c = {'G':0, 'E':0, 'C':0, 'R':0, 'S':0, 'J':0}
         tiempos = sorted(list(obs.keys()))
-        if not tiempos: return c, 0, None, None, 0.0, 0
+        if not tiempos: return c, 0, None, None, 0.0, 0, "Desconocida", 0, 0.0
+        
         epocas = len(obs)
         t_ini, t_fin = obs[tiempos[0]]['_meta'], obs[tiempos[-1]]['_meta']
         intervalos = [tiempos[i] - tiempos[i-1] for i in range(1, epocas)]
         tasa_muestreo = sum(intervalos)/len(intervalos) if intervalos else 0.0
         gaps = sum(1 for i in intervalos if i > tasa_muestreo * 1.5)
+        
+        sats_unicos = set()
+        tiene_l1 = False
+        tiene_l5 = False
+        snr_total = 0.0
+        snr_count = 0
+        
         for t in tiempos:
-            for s in obs[t]:
-                if s != '_meta' and s[0] in c: c[s[0]] += 1
-        return {k: v/epocas for k, v in c.items()}, epocas, t_ini, t_fin, tasa_muestreo, gaps
+            for s, data in obs[t].items():
+                if s != '_meta':
+                    if s[0] in c: c[s[0]] += 1
+                    sats_unicos.add(s)
+                    if 'C1' in data or 'L1' in data: tiene_l1 = True
+                    if 'C5' in data or 'L5' in data: tiene_l5 = True
+                    if 'S1' in data and data['S1'] > 0:
+                        snr_total += data['S1']
+                        snr_count += 1
+                    if 'S5' in data and data['S5'] > 0:
+                        snr_total += data['S5']
+                        snr_count += 1
+                        
+        tipo_senal = "L1 + L5 (Doble Frecuencia)" if (tiene_l1 and tiene_l5) else ("L1 (Monofrecuencia)" if tiene_l1 else "Desconocida")
+        avg_snr = (snr_total / snr_count) if snr_count > 0 else 0.0
+        total_sats = len(sats_unicos)
+        
+        return {k: v/epocas for k, v in c.items()}, epocas, t_ini, t_fin, tasa_muestreo, gaps, tipo_senal, total_sats, avg_snr
     
-    cb, eb, b_ini, b_fin, tr_b, g_b = get_stats(base_raw)
-    cr, er, r_ini, r_fin, tr_r, g_r = get_stats(rover_raw)
-    cs, es, s_ini, s_fin, tr_s, _ = get_stats(rover_sinc)
+    cb, eb, b_ini, b_fin, tr_b, g_b, senal_b, sats_b, snr_b = get_stats(base_raw)
+    cr, er, r_ini, r_fin, tr_r, g_r, senal_r, sats_r, snr_r = get_stats(rover_raw)
+    cs, es, s_ini, s_fin, tr_s, _, senal_s, sats_s, snr_s = get_stats(rover_sinc)
     t_exito = (es / er * 100) if er > 0 else 0.0
     
     sug_iter = 4
@@ -966,10 +989,16 @@ def generar_informe_homogeneizacion_detallado(base_name, rover_name, base_raw, r
     AUDITORÍA FORENSE DE EMPAREJAMIENTO DE ÉPOCAS
 ========================================================================
 [1] PARÁMETROS DE CONTROL (BASE) : {base_name}
+  [-] Tipo de Señal GNSS        : {senal_b}
+  [-] Satélites Únicos Vistos   : {sats_b}
+  [-] Potencia Promedio (SNR)   : {f_14(snr_b)} dBHz
   [-] Épocas Crudas Registradas : {eb}
   [-] Ventana de Observación    : {b_ini_str} - {b_fin_str}
 
 [2] PARÁMETROS DEL MÓVIL (ROVER) : {rover_name}
+  [-] Tipo de Señal GNSS        : {senal_r}
+  [-] Satélites Únicos Vistos   : {sats_r}
+  [-] Potencia Promedio (SNR)   : {f_14(snr_r)} dBHz
   [-] Épocas Crudas Registradas : {er}
   [-] Ventana de Observación    : {r_ini_str} - {r_fin_str}
 
